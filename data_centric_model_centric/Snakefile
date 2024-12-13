@@ -1,0 +1,195 @@
+
+
+from datasets import load_dataset, Features, Image as DsImage, Value
+from digression_code import ads_id, load_annotations_csv, PTModel, Task, ImageFolderDataset, FTModel
+
+all_tasks = [
+    "tillage_practice",
+    "cloud_cover",
+    "crop_height",
+    "crop_name",
+    "angle_to_row"]
+
+rule all:
+    input:
+        #expand("ifd-data/{t}", t=all_tasks)
+        expand("predictions/{t}/{s}.csv", t=all_tasks, s=["train", "test"])
+
+
+rule predictions:
+    input:
+        dset="ifd-data/{taskw}",
+        model="vit/{taskw}"
+    output:
+        "predictions/{taskw}/{split}.csv"
+    threads:
+        5
+    run:
+        ft_model = FTModel(input.model)
+        task = Task(name=wildcards.taskw)
+        ds = load_dataset(
+            "imagefolder", data_dir=input.dset,
+            features=Features({'image': DsImage(),
+                                'labels': task.labels,
+                                'id': Value(dtype='string')}),
+        )
+        out_df = ft_model.predictions_df(ds[wildcards.split], task)
+        out_df.to_csv(str(output), index=False)
+
+rule ft_vit:
+    input:
+        "ifd-data/{taskw}"
+    output:
+        directory("vit/{taskw}")
+    threads:
+        20
+    run:
+        task = Task(name=wildcards.taskw)
+        ds = load_dataset(
+            "imagefolder", data_dir=str(input),
+            features=Features({'image': DsImage(),
+                               'labels': task.labels,
+                               'id': Value(dtype='string')})
+        )
+        pt_model = PTModel(
+            model_name_or_path='google/vit-base-patch16-224-in21k',
+            task=task
+        )
+        prepared_ds = ds.with_transform(pt_model.transform)
+        trainer = pt_model.get_trainer(prepared_ds)
+
+        train_results = trainer.train()
+        trainer.save_model()
+        trainer.log_metrics("train", train_results.metrics)
+        trainer.save_metrics("test", train_results.metrics)
+        trainer.save_state()
+
+        metrics = trainer.evaluate(prepared_ds['test'])
+        trainer.log_metrics("eval", metrics)
+        trainer.save_metrics("eval", metrics)
+
+
+
+rule multiple_ifd:
+    input:
+        "wrong_crop_model/" + ads_id + ".alth/annotations.csv"
+    output:
+        directory("ifd-data/{task_name}")
+    wildcard_constraints:
+        task_name="(cloud_cover)|(crop_height)|(crop_name)|(crop_residue)|(angle_to_row)"
+    params:
+        task = lambda wildcards, output: Task(name=wildcards.task_name)
+    run:
+        df = load_annotations_csv(str(input))
+        task = params.task
+        if task.name == "cloud_cover" or task.name == "crop_height":
+            ifd = ImageFolderDataset(
+                class_name=task.name,
+                keep_levels=task.labels.names,
+                crop_size=1080,
+                sample=37000, train_size=30000,
+                raw_df=df,
+                ifd_base_dir=str(output),
+                artifact_prefix_path="./wrong_crop_model"
+            )
+        elif task.name == "crop_name":
+            ifd = ImageFolderDataset(
+                class_name=task.name,
+                keep_levels=task.labels.names,
+                crop_size=1080,
+                sample=80000, train_size=60000,
+                raw_df=df,
+                ifd_base_dir=str(output),
+                artifact_prefix_path="./wrong_crop_model"
+            )
+        elif task.name == "crop_residue":
+            ifd = ImageFolderDataset(
+                class_name=task.name,
+                keep_levels=task.labels.names,
+                crop_size=1080,
+                sample=5000, train_size=4000,
+                raw_df=df,
+                ifd_base_dir=str(output),
+                artifact_prefix_path="./wrong_crop_model"
+            )
+        elif task.name == "angle_to_row":
+            ifd = ImageFolderDataset(
+                class_name=task.name,
+                keep_levels=task.labels.names,
+                crop_size=1080,
+                sample=20000, train_size=15000,
+                raw_df=df,
+                ifd_base_dir=str(output),
+                artifact_prefix_path="./wrong_crop_model"
+            )
+        else:
+            raise ValueErro("bad task")
+        ifd.make_ifd_()
+
+
+rule tillage_practice_ifd:
+    input:
+        "wrong_crop_model/" + ads_id + ".alth/annotations.csv"
+    output:
+        directory("ifd-data/{task_name}")
+    wildcard_constraints:
+        task_name="tillage_practice"
+    params:
+        task = lambda wildcards, output: Task(name=wildcards.task_name)
+    run:
+        # remap some values
+        m = {
+            "CONVENTIONAL": "CONVENTIONAL",
+            "NO_TILL_OR_COVER_CROP": "MINIMAL",
+            "MINIMAL_OR_STRIP_TILL": "MINIMAL",
+            "OTHER": "OTHER",
+            "UNKNOWN": "UNKNOWN"
+        }
+
+        df = load_annotations_csv(str(input))
+        df = (df[df[params.task.name].notna()]
+              .assign(**{params.task.name: lambda x: [m[_] for _ in x[params.task.name]]}))
+        ifd = ImageFolderDataset(
+            class_name=params.task.name,
+            keep_levels=params.task.labels.names,
+            crop_size=1080,
+            sample=5000, train_size=4000,
+            raw_df=df,
+            ifd_base_dir=str(output),
+            artifact_prefix_path="./wrong_crop_model"
+        )
+        ifd.make_ifd_()
+
+rule row_spacing_ifd:
+    input:
+        "wrong_crop_model/" + ads_id + ".alth/annotations.csv"
+    output:
+        directory("ifd-data/{task_name}")
+    wildcard_constraints:
+        task_name="row_spacing"
+    params:
+        task = lambda wildcards, output: Task(name=wildcards.task_name)
+    run:
+        # remap some values
+        def m(s):
+            if 'TWIN' in s:
+                return 'TWIN'
+            if 'SKIP' in s:
+                return 'SKIP_ROW'
+            if 'CENT' in s or 'INCH' in s:
+                return 'SINGLE'
+            return 'OTHER'
+
+        df = load_annotations_csv(str(input))
+        df = (df[df[params.task.name].notna()]
+              .assign(**{params.task.name: lambda x: [m(_) for _ in x[params.task.name]]}))
+        ifd = ImageFolderDataset(
+            class_name=params.task.name,
+            keep_levels=params.task.labels.names,
+            crop_size=1080,
+            sample=90000, train_size=14000,
+            raw_df=df,
+            ifd_base_dir=str(output),
+            artifact_prefix_path="./wrong_crop_model"
+        )
+        ifd.make_ifd_()

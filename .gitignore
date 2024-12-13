@@ -1,0 +1,9 @@
+data_centric_model_centric/wrong_crop_model
+data_centric_model_centric/ifd-data
+data_centric_model_centric/vit
+data_centric_model_centric/ifd
+data_centric_model_centric/predictions
+data_centric_model_centric/old_training_results
+
+.snakemake
+__pycache__
