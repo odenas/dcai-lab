@@ -9,7 +9,9 @@ import torch
 from torch.nn.functional import softmax
 from transformers.models.vit.modeling_vit import ViTForImageClassification
 from transformers import (AutoModelForImageClassification,
-                          ViTImageProcessor)
+                          AutoModel, ViTImageProcessor)
+from annoy import AnnoyIndex
+
 from .tasks import Task
 
 
@@ -77,4 +79,70 @@ class FTModel:
         return pd.DataFrame(
             predictions,
             columns=['image_id', "y_hat", "y_tilde"] + task.labels.names
+        )
+
+
+@dataclass
+class FTFExtractor:
+    checkpoint_path: Path
+    device_map: str = 'auto'
+    model: AutoModel = field(init=False)
+    processor: callable = field(init=False)
+
+    def __post_init__(self):
+        self.model = AutoModel.from_pretrained(
+            self.checkpoint_path,
+            output_hidden_states=True,
+            device_map=self.device_map
+        )
+        self.processor = (ViTImageProcessor
+                          .from_pretrained(self.checkpoint_path))
+
+    def embeddings_iterator(self, ds):
+        data_iter = tqdm(enumerate(ds), desc='Embeddings', total=len(ds))
+        for i, example in data_iter:
+            output = self.model(
+                **self.processor(example['image'], return_tensors='pt')
+            ).last_hidden_state[:, 0]
+            yield i, example, output
+
+    def embeddings_array(self, ds):
+        embeddings = []
+        for i, example, emb in self.embeddings_iterator(ds):
+            embeddings.append(emb.detach().numpy())
+        return np.vstack(embeddings)
+
+    @staticmethod
+    def annoy_tree(embeddings, n_trees=100, metric='angular'):
+        tree = AnnoyIndex(embeddings.shape[1], metric=metric)
+        data_iter = tqdm(enumerate(embeddings),
+                         desc='KNN Tree',
+                         total=embeddings.shape[0])
+        for i, emb in data_iter:
+            tree.add_item(i, emb)
+        tree.build(n_trees)
+        return tree
+
+    @staticmethod
+    def pairwise_distances(annoy_tree: AnnoyIndex):
+        size = annoy_tree.get_n_items()
+        from itertools import product
+        distances = np.zeros((size, size))
+        idx_iter = tqdm(product(range(size), range(size)),
+                        desc='Pairwise Distances',
+                        total=size**2)
+        for i, j in idx_iter:
+            distances[i, j] = annoy_tree.get_distance(i, j)
+        return distances
+
+    @staticmethod
+    def umap_projection(distances: np.array, n_components=2) -> np.array:
+        from umap import UMAP
+        return UMAP(n_components=n_components).fit_transform(distances)
+
+    @staticmethod
+    def umap_projection_df(umap_proj: np.array,
+                           labels: np.array, image_ids: np.array):
+        return pd.DataFrame(umap_proj, columns=['x', 'y']).assign(
+            label=labels, image_id=image_ids
         )

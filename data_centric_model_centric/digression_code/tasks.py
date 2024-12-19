@@ -8,7 +8,7 @@ cloud_cover_labels = ClassLabel(names=['OVERCAST', 'CLEAR'])
 crop_height_labels = ClassLabel(names=['SMALL', 'LARGE'])
 crop_name_labels = ClassLabel(names=['CORN', 'COTTON', 'RAPESEED', 'SOYBEANS',
                                      'SUGARBEETS', 'OTHER', 'WHEAT'])
-crop_residue_labels = ClassLabel(names=['NONE', 'MEDIUM', 'HIGH'])
+crop_residue_labels = ClassLabel(names=['LOW', 'MEDIUM', 'HIGH'])
 row_spacing_labels = ClassLabel(names=['SINGLE', 'TWIN', 'SKIP_ROW', 'OTHER'])
 tillage_practice_labels = ClassLabel(names=['MINIMAL', 'CONVENTIONAL'])
 

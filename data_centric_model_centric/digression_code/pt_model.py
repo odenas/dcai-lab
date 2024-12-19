@@ -136,19 +136,46 @@ crop_name_train_args = TrainingArguments(
     report_to='tensorboard',
     load_best_model_at_end=True,
 )
+
+crop_residue_transforms = Compose([
+    ToImage(),
+    RandomHorizontalFlip(0.5),
+    ColorJitter(brightness=0.25, contrast=0.25, saturation=0.25, hue=0.1),
+    ToPILImage()
+])
+crop_residue_train_args = TrainingArguments(
+    output_dir="./vit/crop_residue",
+    per_device_train_batch_size=150,
+    per_device_eval_batch_size=150,
+    eval_strategy="steps",
+    num_train_epochs=2,
+    fp16=True,
+    save_steps=10,
+    eval_steps=10,
+    logging_steps=10,
+    learning_rate=2e-4,
+    save_total_limit=2,
+    remove_unused_columns=False,
+    push_to_hub=False,
+    report_to='tensorboard',
+    load_best_model_at_end=True,
+)
+
 _traning_args = {
     'angle_to_row': angle_to_row_train_args,
     'cloud_cover': cloud_cover_train_args,
     'crop_height': crop_height_train_args,
     'crop_name': crop_name_train_args,
     'tillage_practice': tillage_practice_train_args,
+    'crop_residue': crop_residue_train_args
 }
 _transforms = {
     'angle_to_row': angle_to_row_transforms,
     'cloud_cover': cloud_cover_transforms,
     'crop_height': crop_height_transforms,
     'crop_name': crop_name_transforms,
-    'tillage_practice': tillage_practice_transforms
+    'tillage_practice': tillage_practice_transforms,
+    'crop_residue': crop_residue_transforms
 }
 
 
